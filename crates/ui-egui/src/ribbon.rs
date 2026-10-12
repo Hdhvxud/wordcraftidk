@@ -196,7 +196,24 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
-                for (tab, custom) in &tabs {
+
+                // Keep the collaboration controls visible while allowing the tab list to scroll.
+                // Custom ribbon tabs can have arbitrarily long names, and contextual tabs add to
+                // the strip dynamically, so the tab list must not compete with Share/Editing/Comments.
+                let controls_width = 286.0;
+                let tab_area_width = (ui.available_width() - controls_width).max(0.0);
+                ui.allocate_ui_with_layout(
+                    vec2(tab_area_width, 30.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        egui::ScrollArea::horizontal()
+                            .id_salt("tab-strip-scroll")
+                            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.horizontal_centered(|ui| {
+                                    ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+                                    for (tab, custom) in &tabs {
                     let (tab, custom) = (tab.as_str(), *custom);
                     let contextual = !custom && wordcraft_engine::ribbon::CONTEXTUAL_TABS.contains(&tab);
                     // A custom tab's name is the user's own text: shown as typed.
@@ -223,7 +240,11 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                         let _ = app.run("ui.collapseRibbon", json!({}));
                     }
                     resp.context_menu(|ui| crate::widgets::customize_menu_items(ui, app));
-                }
+                                    }
+                                });
+                            });
+                    },
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Share, Editing mode, Comments.
                     let share = tl!("Share");
