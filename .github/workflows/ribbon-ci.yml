@@ -1,0 +1,39 @@
+name: WordCraft Ribbon CI
+
+on:
+  push:
+    branches:
+      - ui/responsive-ribbon-tab-strip
+  pull_request:
+    branches:
+      - main
+      - master
+      - ui/responsive-ribbon-tab-strip
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ribbon-tests-and-build:
+    name: Ribbon tests and application build
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 1
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run ribbon tests
+        run: cargo test -p wordcraft-ui-egui ribbon::tests:: --lib -j 1
+
+      - name: Build WordCraft
+        run: cargo build -p wordcraft -j 1
