@@ -1,0 +1,169 @@
+name: WordCraft Ribbon CI
+
+on:
+  push:
+    branches:
+      - ui/responsive-ribbon-tab-strip
+  pull_request:
+    branches:
+      - main
+      - master
+      - ui/responsive-ribbon-tab-strip
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ribbon-tests-and-build:
+    name: Ribbon tests and application build
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 1
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Create log directory and record environment
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          @(
+            "WordCraft CI diagnostic log"
+            "Timestamp (UTC): $([DateTime]::UtcNow.ToString('o'))"
+            "Repository: $env:GITHUB_REPOSITORY"
+            "Workflow: $env:GITHUB_WORKFLOW"
+            "Run ID: $env:GITHUB_RUN_ID"
+            "Run attempt: $env:GITHUB_RUN_ATTEMPT"
+            "Event: $env:GITHUB_EVENT_NAME"
+            "Ref: $env:GITHUB_REF"
+            "SHA: $env:GITHUB_SHA"
+            "Runner OS: $env:RUNNER_OS"
+            "Runner image: $env:ImageOS"
+            ""
+            "=== Git commit ==="
+          ) | Out-File logs\environment.log -Encoding utf8
+          git log -1 --format=fuller 2>&1 | Out-File logs\environment.log -Append -Encoding utf8
+          @(
+            ""
+            "=== Rust versions ==="
+          ) | Out-File logs\environment.log -Append -Encoding utf8
+          rustc --version --verbose 2>&1 | Out-File logs\environment.log -Append -Encoding utf8
+          cargo --version --verbose 2>&1 | Out-File logs\environment.log -Append -Encoding utf8
+          @(
+            ""
+            "=== Operating system ==="
+            (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, OSArchitecture | Format-List | Out-String)
+            "=== CPU ==="
+            (Get-CimInstance Win32_Processor | Select-Object -First 1 Name, NumberOfCores, NumberOfLogicalProcessors | Format-List | Out-String)
+            "=== Memory (at start) ==="
+            (Get-CimInstance Win32_OperatingSystem | Select-Object @{Name='TotalRAM_GB';Expression={[math]::Round($_.TotalVisibleMemorySize / 1MB, 2)}}, @{Name='FreeRAM_GB';Expression={[math]::Round($_.FreePhysicalMemory / 1MB, 2)}} | Format-List | Out-String)
+            "=== Workspace disk ==="
+            (Get-PSDrive -Name C | Select-Object Name, Used, Free | Format-List | Out-String)
+          ) | Out-File logs\environment.log -Append -Encoding utf8
+
+      - name: Run ribbon tests
+        id: ribbon_tests
+        shell: pwsh
+        run: |
+          "Started (UTC): $([DateTime]::UtcNow.ToString('o'))" | Out-File logs\ribbon-tests.log -Encoding utf8
+          "Command: cargo test -p wordcraft-ui-egui ribbon::tests:: --lib -j 1" | Out-File logs\ribbon-tests.log -Append -Encoding utf8
+          "Commit: $env:GITHUB_SHA" | Out-File logs\ribbon-tests.log -Append -Encoding utf8
+          "" | Out-File logs\ribbon-tests.log -Append -Encoding utf8
+          cargo test -p wordcraft-ui-egui ribbon::tests:: --lib -j 1 2>&1 | Tee-Object -FilePath logs\ribbon-tests.log -Append
+          $code = $LASTEXITCODE
+          "Exit code: $code" | Out-File logs\ribbon-tests.log -Append -Encoding utf8
+          "Finished (UTC): $([DateTime]::UtcNow.ToString('o'))" | Out-File logs\ribbon-tests.log -Append -Encoding utf8
+          "exit_code=$code" >> $env:GITHUB_OUTPUT
+          exit 0
+
+      - name: Build WordCraft
+        id: app_build
+        if: always()
+        shell: pwsh
+        run: |
+          "Started (UTC): $([DateTime]::UtcNow.ToString('o'))" | Out-File logs\application-build.log -Encoding utf8
+          "Command: cargo build -p wordcraft -j 1" | Out-File logs\application-build.log -Append -Encoding utf8
+          "Commit: $env:GITHUB_SHA" | Out-File logs\application-build.log -Append -Encoding utf8
+          "" | Out-File logs\application-build.log -Append -Encoding utf8
+          cargo build -p wordcraft -j 1 2>&1 | Tee-Object -FilePath logs\application-build.log -Append
+          $code = $LASTEXITCODE
+          "Exit code: $code" | Out-File logs\application-build.log -Append -Encoding utf8
+          "Finished (UTC): $([DateTime]::UtcNow.ToString('o'))" | Out-File logs\application-build.log -Append -Encoding utf8
+          "exit_code=$code" >> $env:GITHUB_OUTPUT
+          exit 0
+
+      - name: Record final diagnostics and workflow summary
+        if: always()
+        shell: pwsh
+        env:
+          TEST_EXIT_CODE: ${{ steps.ribbon_tests.outputs.exit_code }}
+          BUILD_EXIT_CODE: ${{ steps.app_build.outputs.exit_code }}
+          TEST_OUTCOME: ${{ steps.ribbon_tests.outcome }}
+          BUILD_OUTCOME: ${{ steps.app_build.outcome }}
+        run: |
+          @(
+            ""
+            "=== Final diagnostics ==="
+            "Finished (UTC): $([DateTime]::UtcNow.ToString('o'))"
+            "Ribbon test step outcome: $env:TEST_OUTCOME"
+            "Ribbon test exit code: $env:TEST_EXIT_CODE"
+            "Build step outcome: $env:BUILD_OUTCOME"
+            "Build exit code: $env:BUILD_EXIT_CODE"
+            ""
+            "=== Git working tree ==="
+          ) | Out-File logs\environment.log -Append -Encoding utf8
+          git status --short 2>&1 | Out-File logs\environment.log -Append -Encoding utf8
+          @(
+            ""
+            "=== Memory (at end) ==="
+            (Get-CimInstance Win32_OperatingSystem | Select-Object @{Name='TotalRAM_GB';Expression={[math]::Round($_.TotalVisibleMemorySize / 1MB, 2)}}, @{Name='FreeRAM_GB';Expression={[math]::Round($_.FreePhysicalMemory / 1MB, 2)}} | Format-List | Out-String)
+            "=== Workspace disk (at end) ==="
+            (Get-PSDrive -Name C | Select-Object Name, Used, Free | Format-List | Out-String)
+          ) | Out-File logs\environment.log -Append -Encoding utf8
+
+          $testStatus = if ($env:TEST_EXIT_CODE -eq '0') { 'PASS' } else { 'FAIL or NOT RUN' }
+          $buildStatus = if ($env:BUILD_EXIT_CODE -eq '0') { 'PASS' } else { 'FAIL or NOT RUN' }
+          @(
+            "# WordCraft CI result"
+            ""
+            "- **Repository:** $env:GITHUB_REPOSITORY"
+            "- **Commit:** $env:GITHUB_SHA"
+            "- **Branch/ref:** $env:GITHUB_REF"
+            "- **Run:** $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID (attempt $env:GITHUB_RUN_ATTEMPT)"
+            "- **Runner:** $env:RUNNER_OS / $env:ImageOS"
+            "- **Ribbon tests:** $testStatus (exit code: $env:TEST_EXIT_CODE)"
+            "- **Application build:** $buildStatus (exit code: $env:BUILD_EXIT_CODE)"
+            ""
+            "Detailed compiler output and diagnostics are attached as the workflow artifact."
+          ) | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Upload logs and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordcraft-ci-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: logs/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail workflow if tests or build failed
+        if: always()
+        shell: pwsh
+        env:
+          TEST_EXIT_CODE: ${{ steps.ribbon_tests.outputs.exit_code }}
+          BUILD_EXIT_CODE: ${{ steps.app_build.outputs.exit_code }}
+        run: |
+          if ($env:TEST_EXIT_CODE -ne '0' -or $env:BUILD_EXIT_CODE -ne '0') {
+            Write-Error "WordCraft CI failed. Download the wordcraft-ci-logs artifact and inspect ribbon-tests.log, application-build.log, and environment.log."
+            exit 1
+          }
+          Write-Host "Ribbon tests and application build both succeeded."
